@@ -1,91 +1,183 @@
 import os
-os.environ['CUDA_HOME'] = '/home/yao/miniconda3/envs/qfm'  # 强制指定 CUDA_HOME 为当前 Conda 环境路径
 import sys
 import platform
-import torch
+import importlib.util
+import importlib.metadata
 import time
+
+if platform.system() == "Linux":  # 🔧 PyCharm/WSL 专用补丁 (防止 DeepSpeed 报错)
+    os.environ['CUDA_HOME'] = '/home/yao/miniconda3/envs/qfm'   # 请确保这个路径是你 Conda 环境的真实路径
 
 
 def print_status(component, status, version=None, extra=""):
-    """漂亮的打印格式"""
+    """格式化打印状态"""
+    icon = {
+        "OK": "✅",
+        "MISS": "❌",
+        "WARN": "⚠️",
+        "OPT": "⚪"
+    }
     ver_str = f"(v{version})" if version else ""
-    print(f"[{status}] {component:<20} {ver_str} {extra}")
+    print(f"[{icon.get(status, '?')}] {component:<20} {ver_str:<15} {extra}")
 
 
-def run_verification():
-    print("=" * 60)
-    print(f"🔍 QFM 环境终极自检 (WSL2 + RTX 3090 Ti)")
-    print("=" * 60)
+def get_version(package_name):
+    """安全获取包版本"""
+    try:
+        return importlib.metadata.version(package_name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
 
-    # 1. 基础环境
-    print_status("OS Platform", "✅", platform.system(), f"- {platform.release()}")
-    print_status("Python", "✅", sys.version.split()[0])
 
-    # 2. PyTorch & CUDA
-    if torch.cuda.is_available():
+def check_import(package_name, import_name=None):
+    """尝试 import 库并返回状态"""
+    if import_name is None:
+        import_name = package_name
+
+    try:
+        if importlib.util.find_spec(import_name) is not None:
+            ver = get_version(package_name)
+            return "OK", ver, ""
+        else:
+            return "MISS", None, "Not installed"
+    except Exception as e:
+        return "WARN", None, f"Import Error: {str(e)}"
+
+
+def run_comprehensive_test():
+    print("=" * 70)
+    print(f"🔍 QFM 项目全栈依赖自检")
+    print(f"🕒 时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 70)
+
+    # ----------------------------------------------------
+    # 1. 核心系统与 Python
+    # ----------------------------------------------------
+    print(f"\n🛠️  [System & Python]")
+    py_ver = sys.version.split()[0]
+    py_status = "OK" if sys.version_info >= (3, 10) else "WARN"
+    print_status("OS Platform", "OK", platform.system(), f"{platform.release()}")
+    print_status("Python", py_status, py_ver, ">=3.10 Required")
+
+    # ----------------------------------------------------
+    # 2. 深度学习基础 (Torch Stack)
+    # ----------------------------------------------------
+    print(f"\n🧠 [Deep Learning Core]")
+    import torch
+    import numpy
+
+    # Numpy
+    print_status("Numpy", "OK", numpy.__version__)
+
+    # Torch
+    print_status("PyTorch", "OK", torch.__version__)
+
+    # CUDA
+    cuda_available = torch.cuda.is_available()
+    if cuda_available:
         gpu_name = torch.cuda.get_device_name(0)
         capability = torch.cuda.get_device_capability(0)
-        print_status("PyTorch", "✅", torch.__version__)
-        print_status("CUDA", "✅", torch.version.cuda)
-        print_status("GPU", "✅", gpu_name, f"(Compute Capability: {capability[0]}.{capability[1]})")
-
-        # 显存测试
-        try:
-            free_mem, total_mem = torch.cuda.mem_get_info()
-            print(f"    └── VRAM: {free_mem / 1024 ** 3:.2f} GB Free / {total_mem / 1024 ** 3:.2f} GB Total")
-        except:
-            pass
+        cap_str = f"{capability[0]}.{capability[1]}"
+        v_ram = torch.cuda.get_device_properties(0).total_memory / 1024 ** 3
+        print_status("CUDA", "OK", torch.version.cuda)
+        print_status("GPU Device", "OK", gpu_name, f"({cap_str}) | V_RAM: {v_ram:.1f} GB")
     else:
-        print_status("PyTorch", "❌", torch.__version__, "CUDA NOT AVAILABLE!")
-        return
+        print_status("CUDA", "WARN", None, "Running on CPU (No GPU detected)")
 
-    # 3. 检查 Flash Attention
+    # ----------------------------------------------------
+    # 3. 模型与数据生态 (Model Ecosystem)
+    # ----------------------------------------------------
+    print(f"\n📦 [Model & Data Libraries]")
+
+    # 列表：(PyPI包名, Python import名)
+    libs = [
+        ("transformers", "transformers"),
+        ("diffusers", "diffusers"),
+        ("accelerate", "accelerate"),
+        ("safetensors", "safetensors"),
+        ("pillow", "PIL"),
+        ("tqdm", "tqdm"),
+        ("torchvision", "torchvision"),
+    ]
+
+    for pkg, imp in libs:
+        status, ver, msg = check_import(pkg, imp)
+        print_status(pkg, status, ver, msg)
+
+    # 检查 CLI 工具 (pre-commit)
+    pc_ver = get_version("pre-commit")
+    if pc_ver:
+        print_status("pre-commit", "OK", pc_ver, "(CLI Tool)")
+    else:
+        print_status("pre-commit", "MISS", None, "Dev tool missing")
+
+    # ----------------------------------------------------
+    # 4. 高性能加速 (GPU Optional)
+    # ----------------------------------------------------
+    print(f"\n🚀 [GPU Acceleration (Optional)]")
+
+    # 检查构建工具
+    for pkg in ["packaging", "ninja"]:
+        status, ver, msg = check_import(pkg)
+        print_status(pkg, status, ver, msg)
+
+    # 检查 Flash Attention
     try:
         import flash_attn
-        print_status("Flash Attention", "✅", flash_attn.__version__)
-    except ImportError as e:
-        print_status("Flash Attention", "❌", extra=f"Import Error: {e}")
+        print_status("flash-attn", "OK", flash_attn.__version__)
+    except ImportError:
+        flash_attn = None
+        status = "OPT" if not cuda_available else "MISS"
+        print_status("flash-attn", status, flash_attn, "Optional (Required for 3090 Ti)")
     except Exception as e:
-        print_status("Flash Attention", "⚠️", extra=f"Error: {e}")
+        print_status("flash-attn", "WARN", None, f"Error: {e}")
 
-    # 4. 检查 DeepSpeed
+    # 检查 DeepSpeed (最难搞的一个)
     try:
         import deepspeed
-        # DeepSpeed 需要 ninja，这里也能顺便测一下
-        print_status("DeepSpeed", "✅", deepspeed.__version__, f"(Ops: {deepspeed.ops.__path__[0]})")
+        ds_ver = deepspeed.__version__
+        ops_status = "Ops OK" if hasattr(deepspeed, 'ops') else "Ops Warning"   # 尝试访问 ops 以确认编译状态
+        print_status("deepspeed", "OK", ds_ver, ops_status)
     except ImportError:
-        print_status("DeepSpeed", "❌", extra="Not installed")
+        deepspeed = None
+        status = "OPT" if not cuda_available else "MISS"
+        print_status("deepspeed", status, deepspeed, "Optional")
     except Exception as e:
-        print_status("DeepSpeed", "⚠️", extra=f"Error: {e}")
+        print_status("deepspeed", "WARN", None, f"Error: {str(e)}")
 
-    # 5. 真实算力测试 (Matrix Multiplication)
-    print("-" * 60)
-    print("🚀 正在运行 Tensor Core 算力测试...")
-    try:
-        # 创建两个较大的随机矩阵放到 GPU
-        size = 4096
-        a = torch.randn(size, size, device='cuda', dtype=torch.float16)
-        b = torch.randn(size, size, device='cuda', dtype=torch.float16)
+    # ----------------------------------------------------
+    # 5. 实战算力测试 (Smoke Test)
+    # ----------------------------------------------------
+    if cuda_available:
+        print("-" * 70)
+        print("🔥  Running Tensor Core Benchmark...")
+        try:
+            size = 4096
+            a = torch.randn(size, size, device='cuda', dtype=torch.float16)
+            b = torch.randn(size, size, device='cuda', dtype=torch.float16)
 
-        # 预热
-        torch.mm(a, b)
+            # Warmup
+            torch.mm(a, b)
+            torch.cuda.synchronize()
 
-        # 计时
-        start = time.time()
-        c = torch.mm(a, b)
-        torch.cuda.synchronize()  # 等待计算完成
-        end = time.time()
+            # Test
+            start = time.time()
+            torch.mm(a, b)
+            torch.cuda.synchronize()
+            end = time.time()
 
-        t = end - start
-        tflops = (2 * size ** 3) / t / 1e12
-        print(f"✅ 计算成功！耗时: {t * 1000:.2f} ms | 性能: {tflops:.2f} TFLOPS")
-        print("🎉 环境配置完美，可以开始训练了！")
+            t = end - start
+            t_flops = (2 * size ** 3) / t / 1e12
+            print(f"✅  Matrix Mul ({size}x{size}): {t * 1000:.2f} ms | Performance: {t_flops:.2f} T_FLOPS")
+            print("🎉  All critical systems operational!")
 
-    except Exception as e:
-        print(f"❌ 计算测试失败: {e}")
+        except Exception as e:
+            print(f"❌  Compute Error: {e}")
+    else:
+        print("\n⚠️  Skipping benchmark (No GPU)")
 
-    print("=" * 60)
+    print("=" * 70)
 
 
 if __name__ == "__main__":
-    run_verification()
+    run_comprehensive_test()
