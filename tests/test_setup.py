@@ -1,7 +1,7 @@
-import torch
 import platform
-
 import sys
+
+import torch
 
 print("=" * 30)
 print(f"OS Detected:      {platform.system()}")

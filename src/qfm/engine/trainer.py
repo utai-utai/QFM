@@ -48,7 +48,7 @@ def run_training():
         pbar = tqdm(dataloader, desc=f"Epoch {epoch + 1}/{cfg.train.epochs}")
         loss_avg = 0
 
-        for step, batch in enumerate(pbar):
+        for _step, batch in enumerate(pbar):
             x_1 = batch["x"].to(device, dtype=dtype)
             clip_vec = batch["t_embed"].to(device, dtype=dtype)
             qwen_emb = batch["context"].to(device, dtype=dtype)
