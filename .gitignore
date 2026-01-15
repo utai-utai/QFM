@@ -36,20 +36,24 @@ env/
 # === Mac 垃圾文件 ===
 .DS_Store
 
-# === [关键] QFM 项目数据与权重 ===
-# 不想上传原始图片
+# === QFM 项目核心配置 ===
+
+# 1. data/raw_images: 忽略里面的图片，但保留文件夹本身
 data/raw_images/*
 !data/raw_images/.gitkeep
 
-# 不想上传几百个 .pt 预处理文件
+# 2. data/processed: 忽略里面的 .pt，但保留文件夹本身
 data/processed/*
 !data/processed/.gitkeep
 
-# 不想上传巨大的模型权重
+# 3. checkpoints: 忽略里面的 .pth，但保留文件夹本身
 checkpoints/*
 !checkpoints/.gitkeep
 
-# 忽略临时的推理结果
+# 4. 保留 data.jsonl
+!data/data.jsonl
+
+# === 忽略临时生成的图片 ===
 *.png
 *.jpg
 result.png
