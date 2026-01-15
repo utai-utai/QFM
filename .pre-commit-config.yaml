@@ -1,0 +1,24 @@
+repos:
+  # 1. 基础“卫生”检查 (官方提供的标准钩子)
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace        # 自动删除行尾多余空格
+      - id: end-of-file-fixer          # 确保文件最后有一行空行
+      - id: check-yaml                 # 检查 .yaml 文件格式是否正确
+      - id: check-toml                 # 检查 .toml 文件格式是否正确
+      - id: check-added-large-files    # [重中之重] 防止你手滑把 2GB 的权重文件 commit 上去
+        args: ['--maxkb=50000']        # 限制单文件最大 50MB (超过会报错阻止提交)
+
+  # 2. Ruff: 极速代码检查与 Import 排序 (取代 Flake8/Isort)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.2
+    hooks:
+      - id: ruff
+        args: [ --fix ]                # 自动修复简单错误 (如未使用的引用)
+
+  # 3. Ruff Format: 极速代码格式化 (取代 Black)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.2
+    hooks:
+      - id: ruff-format                # 强制统一缩进和换行

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qfm"
+version = "0.1.0"
+description = "Quantum Flow Matching MVP"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.4.0",
+    "torchvision>=0.19.0",
+    "transformers>=4.44.0",
+    "diffusers>=0.30.0",
+    "accelerate>=0.34.0",
+    "safetensors>=0.4.5",
+    "pillow>=10.4.0",
+    "numpy>=1.26.0",
+    "tqdm>=4.66.0"
+]
+
+# === 关键：告诉 pip 源代码在哪里 ===
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# === Ruff 配置 (取代 Black/Isort/Flake8) ===
+[tool.ruff]
+# 单行最大字符数
+line-length = 120
+# 排除的文件
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+# 开启的规则: E(Pycodestyle错误), F(Pyflakes), I(Import排序)
+select = ["E", "F", "I"]

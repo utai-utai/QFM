@@ -1,0 +1,58 @@
+# === Python 垃圾文件 ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# === 虚拟环境 (Mac/Win) ===
+venv/
+.venv/
+env/
+.env
+
+# === IDE 配置 (PyCharm/VSCode) ===
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# === Mac 垃圾文件 ===
+.DS_Store
+
+# === [关键] QFM 项目数据与权重 ===
+# 不想上传原始图片
+data/raw_images/*
+!data/raw_images/.gitkeep
+
+# 不想上传几百个 .pt 预处理文件
+data/processed/*
+!data/processed/.gitkeep
+
+# 不想上传巨大的模型权重
+checkpoints/*
+!checkpoints/.gitkeep
+
+# 忽略临时的推理结果
+*.png
+*.jpg
+result.png
+
+# === 日志 ===
+*.log
