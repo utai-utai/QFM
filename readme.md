@@ -54,11 +54,22 @@ source .venv/bin/activate
 
 这是最关键的一步！它会安装所有包，并配置好 `qfm` 的导入路径。
 
+* 如果使用 Mac 或 Windows 的基础 CPU 版本：
 ```bash
 pip install -e .
 ```
-
 *(注意最后有个点 `.`)*
+
+* 如果使用 Linux/WSL (带GPU加速)：
+```bash
+pip install -e ".[gpu]"
+```
+* 我们在项目中内置了一个诊断脚本，用于检测 CUDA、DeepSpeed 和 Flash Attention 是否安装正确。
+```bash
+python tests/test_env.py
+```
+
+*如果看到全绿 `[✅]`，说明环境完美。*
 
 ### 3. 安装代码检查钩子 (Pre-commit)
 
@@ -166,6 +177,46 @@ git push
 **Q: 找不到 `qfm` 模块？**
 
 * 请确保你执行了 `pip install -e .`。
+
+---
+
+## 💻 开发环境避坑指南 (WSL2 + PyCharm)
+
+如果你在 Windows 上使用 WSL2 + PyCharm 开发，请务必阅读以下常见问题：
+
+### Q1: DeepSpeed 报错 `CUDA_HOME does not exist`？
+
+PyCharm 直接运行时可能无法加载 `.bashrc` 环境变量。
+
+* **方法**：运行 `python tests/test_env.py`，脚本内置了自动修复补丁。或者在 `.bashrc` 中强制写入：
+```bash
+export CUDA_HOME=/你的环境路径/
+export PATH=$CUDA_HOME/bin:$PATH
+```
+
+
+
+### Q2: Git 提交时报错 `pre-commit not found`？
+
+这是因为 PyCharm 使用了 Windows 版 Git，找不到 WSL 里的环境。
+
+* **方法 A (推荐)**：在 PyCharm 底部的 Terminal `(qfm)` 中使用命令行提交：
+```bash
+git commit -m "..."
+```
+* **方法 B (彻底修复)**：在 PyCharm 设置中，将 Git 可执行文件路径改为 WSL 路径：
+```bash
+\\wsl$\Ubuntu-22.04\usr\bin\git
+```
+
+### Q3: 报错 `detected dubious ownership`？
+
+这是 Windows 访问 Linux 文件权限问题。
+
+* 在 Windows PowerShell 中运行：
+```bash
+git config --global --add safe.directory '*'
+```
 
 ---
 ## AI 对话提示词
