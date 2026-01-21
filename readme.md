@@ -66,7 +66,7 @@ pip install -e ".[gpu]"
 ```
 * 我们在项目中内置了一个诊断脚本，用于检测 CUDA、DeepSpeed 和 Flash Attention 是否安装正确。
 ```bash
-python tests/test_env.py
+python tests/test_lib.py
 ```
 
 *如果看到全绿 `[✅]`，说明环境完美。*
@@ -117,13 +117,21 @@ python main.py train
 ### 4. 推理 (Inference)
 
 加载训练好的权重生成图片。
-
+- 默认推理 (自动用最新模型 + 生成 512x512)：
 ```bash
-python main.py inference --ckpt checkpoints/flux_moe_ep10.pth --prompt "A cyberpunk city"
+python main.py inference --prompt "A cute cat"
+```
+- 高级推理 (生成宽屏壁纸 1024x512)：
+```bash
+python main.py inference --prompt "Wide angle shot of space station" --width 1024 --height 512
+```
+- 指定模型推理：
+```bash
+python main.py inference --ckpt checkpoints/qfm_moe_ep10.pth
 ```
 
----
 
+---
 ## 🤝 协作工作流 (Workflow)
 
 为了保证工作流顺畅，请严格遵守以下流程：

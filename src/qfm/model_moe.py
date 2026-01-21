@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -26,12 +28,9 @@ class Top2Router(nn.Module):
         self.gate = nn.Linear(hidden_size, num_experts)
 
     def forward(self, x):
-        # x: [B, L, D] -> logits: [B, L, E]
         logits = self.gate(x)
         probs = F.softmax(logits, dim=-1)
-        # 选出 Top-2
         top_weights, top_indices = torch.topk(probs, k=2, dim=-1)
-        # 归一化权重
         top_weights = top_weights / (top_weights.sum(dim=-1, keepdim=True) + 1e-6)
         return top_weights, top_indices
 
@@ -44,9 +43,9 @@ class SparseMoELayer(nn.Module):
         self.experts = nn.ModuleList([Expert(hidden_size, intermediate_size) for _ in range(num_experts)])
 
     def forward(self, x):
+        # x: [B, L, D]
         batch, seq_len, dim = x.shape
         weights, indices = self.router(x)
-
         final_output = torch.zeros_like(x)
 
         flat_x = x.view(-1, dim)
@@ -54,7 +53,6 @@ class SparseMoELayer(nn.Module):
         flat_indices = indices.view(-1, 2)
         flat_weights = weights.view(-1, 2)
 
-        # 简单循环实现 (MVP适用)
         for i, expert in enumerate(self.experts):
             mask = flat_indices == i
             batch_mask = mask.any(dim=-1)
@@ -84,7 +82,6 @@ def modulate(x, shift, scale):
 class MoEDiTBlock(nn.Module):
     def __init__(self, hidden_size, num_heads, qwen_dim, num_experts=8):
         super().__init__()
-
         self.norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.attn = nn.MultiheadAttention(hidden_size, num_heads, batch_first=True)
 
@@ -96,30 +93,22 @@ class MoEDiTBlock(nn.Module):
         self.norm3 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
         self.moe = SparseMoELayer(hidden_size, num_experts)
 
-        # 9 chunks: (shift, scale, gate) * 3 blocks
         self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(hidden_size, 9 * hidden_size, bias=True))
-        # Zero Init
         nn.init.constant_(self.adaLN_modulation[1].weight, 0)
         nn.init.constant_(self.adaLN_modulation[1].bias, 0)
 
     def forward(self, x, c, context_emb):
-        # c: Global Condition (Time + Style)
-        # context_emb: Spatial Condition (Qwen)
-
         params = self.adaLN_modulation(c).chunk(9, dim=1)
         (shift_sa, scale_sa, gate_sa, shift_ca, scale_ca, gate_ca, shift_moe, scale_moe, gate_moe) = params
 
-        # 1. Self-Attention
         x_norm = modulate(self.norm1(x), shift_sa, scale_sa)
         attn_out, _ = self.attn(x_norm, x_norm, x_norm)
         x = x + gate_sa.unsqueeze(1) * attn_out
 
-        # 2. Cross-Attention (Input: x, Key/Value: Qwen)
         x_norm = modulate(self.norm2(x), shift_ca, scale_ca)
         cross_out, _ = self.cross_attn(query=x_norm, key=context_emb, value=context_emb)
         x = x + gate_ca.unsqueeze(1) * cross_out
 
-        # 3. MoE
         x_norm = modulate(self.norm3(x), shift_moe, scale_moe)
         moe_out = self.moe(x_norm)
         x = x + gate_moe.unsqueeze(1) * moe_out
@@ -128,14 +117,14 @@ class MoEDiTBlock(nn.Module):
 
 
 # ==========================================
-# Part C: 主模型架构
+# Part C: 主模型架构 (修复版)
 # ==========================================
 
 
 class MiniFluxDiT(nn.Module):
     def __init__(
         self,
-        input_size=64,  # 64x64 latent size (512px image)
+        input_size=64,
         patch_size=2,
         in_channels=4,
         hidden_size=1024,
@@ -149,23 +138,18 @@ class MiniFluxDiT(nn.Module):
         self.input_size = input_size
         self.patch_size = patch_size
         self.hidden_size = hidden_size
+        self.in_channels = in_channels
 
-        # Image Embedding
         self.x_embedder = nn.Conv2d(in_channels, hidden_size, kernel_size=patch_size, stride=patch_size)
 
-        # Positional Embedding
         num_patches = (input_size // patch_size) ** 2
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size))
 
-        # Condition Embedding (Time=256 + CLIP=768 -> 1024)
-        # 注意：Time Embedding 我们会在 forward 里动态生成
         self.t_embedder_mlp = nn.Sequential(nn.Linear(256, 256), nn.SiLU(), nn.Linear(256, 256))
         self.cond_proj = nn.Linear(256 + clip_dim, hidden_size)
 
-        # Blocks
         self.blocks = nn.ModuleList([MoEDiTBlock(hidden_size, num_heads, qwen_dim, num_experts) for _ in range(depth)])
 
-        # Final Layer
         self.final_layer = nn.Sequential(
             nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6),
             nn.Linear(hidden_size, patch_size * patch_size * in_channels, bias=True),
@@ -178,16 +162,22 @@ class MiniFluxDiT(nn.Module):
         nn.init.constant_(self.final_layer[-1].weight, 0)
         nn.init.constant_(self.final_layer[-1].bias, 0)
 
-    def unpatchify(self, x):
-        c = 4
+    def unpatchify(self, x, h, w):
+        """
+        支持非正方形图片
+        h, w: 是 patch 的数量 (例如 32, 48)
+        """
+        c = self.in_channels
         p = self.patch_size
-        h = w = int(x.shape[1] ** 0.5)
+
+        # x: [B, L, P*P*C] -> [B, H, W, P, P, C]
         x = x.reshape(shape=(x.shape[0], h, w, p, p, c))
+        # [B, H, W, P, P, C] -> [B, C, H, P, W, P]
         x = torch.einsum("nhwpqc->nchpwq", x)
-        return x.reshape(shape=(x.shape[0], c, h * p, h * p))
+        # -> [B, C, H*P, W*P]
+        return x.reshape(shape=(x.shape[0], c, h * p, w * p))
 
     def get_timestep_embedding(self, t, dim=256):
-        # t: [B] float
         half_dim = dim // 2
         emb = torch.log(torch.tensor(10000.0)) / (half_dim - 1)
         emb = torch.exp(torch.arange(half_dim, device=t.device) * -emb)
@@ -196,25 +186,45 @@ class MiniFluxDiT(nn.Module):
         return emb
 
     def forward(self, x, t, clip_vec, qwen_context):
-        # x: [B, 4, 64, 64]
-        # t: [B]
+        # x: [B, 4, H, W] (注意 H, W 可能不是 64x64)
+        B, C, H, W = x.shape
 
         # 1. Embed Inputs
-        x = self.x_embedder(x).flatten(2).transpose(1, 2)  # [B, L, D]
-        x = x + self.pos_embed
+        # x_embedder 是卷积，会自动处理不同分辨率
+        x = self.x_embedder(x)  # [B, D, H/p, W/p]
 
-        # 2. Embed Conditions
-        t_emb = self.get_timestep_embedding(t)  # [B, 256]
+        # 记录现在的 grid size，后面 unpatchify 要用
+        grid_h, grid_w = x.shape[2], x.shape[3]
+
+        x = x.flatten(2).transpose(1, 2)  # [B, L, D]
+
+        # 🔥 2. Positional Embedding 插值 (关键修复)
+        if x.shape[1] != self.pos_embed.shape[1]:
+            # 拿到原始设定的边长 (比如 sqrt(1024) = 32)
+            orig_size = int(math.sqrt(self.pos_embed.shape[1]))
+            # 还原 pos_embed 为 2D: [1, D, 32, 32]
+            pos_embed = self.pos_embed.permute(0, 2, 1).reshape(1, -1, orig_size, orig_size)
+            # 插值到现在的尺寸 [1, D, grid_h, grid_w]
+            pos_embed = F.interpolate(pos_embed, size=(grid_h, grid_w), mode="bicubic", align_corners=False)
+            # 压扁回去: [1, L_new, D]
+            pos_embed = pos_embed.flatten(2).transpose(1, 2)
+            x = x + pos_embed
+        else:
+            x = x + self.pos_embed
+
+        # 3. Embed Conditions
+        t_emb = self.get_timestep_embedding(t)
+        t_emb = t_emb.to(dtype=x.dtype)
         t_emb = self.t_embedder_mlp(t_emb)
+        cond = torch.cat([t_emb, clip_vec], dim=-1)
+        c = self.cond_proj(cond)
 
-        cond = torch.cat([t_emb, clip_vec], dim=-1)  # [B, 256+768]
-        c = self.cond_proj(cond)  # [B, Hidden]
-
-        # 3. Backbone
+        # 4. Backbone
         for block in self.blocks:
             x = block(x, c, qwen_context)
 
-        # 4. Output
+        # 5. Output
         x = self.final_layer(x)
-        x = self.unpatchify(x)
+        x = self.unpatchify(x, grid_h, grid_w)
+
         return x
