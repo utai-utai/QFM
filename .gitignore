@@ -38,20 +38,24 @@ env/
 
 # === QFM 项目核心配置 ===
 
-# 1. data/raw_images: 忽略里面的图片，但保留文件夹本身
-data/raw_images/*
-!data/raw_images/.gitkeep
+# === QFM 项目核心配置 ===
 
-# 2. data/processed: 忽略里面的 .pt，但保留文件夹本身
+# 1. 通用忽略：忽略 data 目录下的所有杂物
+data/*
+
+# 2. 保留 data 根目录本身 (需要在 data/ 下放个 .gitkeep)
+!data/.gitkeep
+
+# 3. 保留索引文件
+!data/data.jsonl
+
+# 4. processed 目录：保留空文件夹结构
+!data/processed/
 data/processed/*
 !data/processed/.gitkeep
 
-# 3. checkpoints: 忽略里面的 .pth，但保留文件夹本身
-checkpoints/*
-!checkpoints/.gitkeep
-
-# 4. 保留 data.jsonl
-!data/data.jsonl
+# 5. raw_images 目录：彻底忽略
+data/raw_images
 
 # === 忽略临时生成的图片 ===
 *.png
@@ -60,3 +64,8 @@ result.png
 
 # === 日志 ===
 *.log
+
+# === 模型权重 (Checkpoints) ===
+*.pth
+checkpoints/*
+!checkpoints/.gitkeep
