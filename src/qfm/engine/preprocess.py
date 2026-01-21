@@ -8,7 +8,6 @@ from PIL import Image
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, CLIPTextModel, CLIPTokenizer
 
-# 引入你的配置
 from qfm.config import cfg
 
 # =================配置区域=================
