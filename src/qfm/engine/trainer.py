@@ -108,8 +108,8 @@ def run_training():
 
             global_step += 1
 
-            # --- 🔥 5. WandB 监控专家负载 (每100步看一次) ---
-            if global_step % 100 == 0:
+            # --- 🔥 5. WandB 监控专家负载 ---
+            if global_step % cfg.train.log_interval == 0:
                 expert_counts = torch.zeros(cfg.model.num_experts, device=device)
 
                 # 遍历模型里所有的 MoE 层，收集 last_indices
@@ -133,8 +133,7 @@ def run_training():
                 pbar.set_postfix(loss=f"{loss.item():.4f}", lr=f"{optimizer.param_groups[0]['lr']:.6f}")
 
             # --- 🔥 6. 训练中验证 (Validation Strategy) ---
-            # 每 5000 步 (或者每个 Epoch 末尾)，跑一张图看看效果
-            if global_step % 5000 == 0:
+            if global_step % cfg.train.validation_interval == 0:
                 logger.info("🎨 Running validation inference...")
 
                 # 保存临时权重

@@ -21,10 +21,12 @@ class ModelArgs:
 class TrainingArgs:
     batch_size: int = 16  # 这是每个桶内的 Batch Size
     lr: float = 5e-5  # 模型大了，LR 调小
-    epochs: int = 10
-    save_interval: int = 5
+    epochs: int = 20
     grad_clip: float = 1.0
     seed: int = 42
+    save_interval: int = 2
+    log_interval: int = 100
+    validation_interval: int = 2000
 
 
 class Config:
