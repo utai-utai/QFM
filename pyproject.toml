@@ -12,6 +12,7 @@ dependencies = [
     # === 深度学习基础框架 ===
     "torch==2.5.1",
     "torchvision==0.20.1",
+    "ema-pytorch",
     "numpy>=1.26.0,<2.3.0",
 
     # === 模型与数据处理 ===
@@ -21,6 +22,8 @@ dependencies = [
     "safetensors>=0.4.5",
     "pillow>=10.4.0",
     "tqdm>=4.66.0",
+    "wandb",
+
 
     # === 代码质量 ===
     "pre-commit"

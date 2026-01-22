@@ -64,6 +64,9 @@ result.png
 
 # === 日志 ===
 *.log
+wandb/
+.wandb
+*.wandb
 
 # === 模型权重 (Checkpoints) ===
 *.pth

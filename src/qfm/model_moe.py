@@ -46,6 +46,7 @@ class SparseMoELayer(nn.Module):
         # x: [B, L, D]
         batch, seq_len, dim = x.shape
         weights, indices = self.router(x)
+        self.last_indices = indices.detach()
         final_output = torch.zeros_like(x)
 
         flat_x = x.view(-1, dim)
@@ -66,7 +67,7 @@ class SparseMoELayer(nn.Module):
                 voting_weights = (selected_weights * expanded_mask.float()).sum(dim=1, keepdim=True)
 
                 flat_output[batch_mask] += expert_out * voting_weights
-
+        final_output = flat_output.reshape(batch, seq_len, dim)
         return final_output
 
 
