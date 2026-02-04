@@ -10,20 +10,6 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, CLIPTextModel, CLI
 
 from qfm.config import cfg
 
-# =================配置区域=================
-# 定义分桶的分辨率 (Width, Height)
-# 保证总像素数约为 256k (512x512) 或 1M (1024x1024)
-# 这里以 512为基准，适配 3090 Ti 显存
-BUCKETS = [
-    (512, 512),  # 1:1
-    (576, 448),  # 4:3 这里的数字必须能被 8 (VAE stride) 整除，最好能被 32 (DiT patch) 整除
-    (448, 576),  # 3:4
-    (640, 384),  # 16:9
-    (384, 640),  # 9:16
-    (704, 320),  # 21:9
-    (320, 704),  # 9:21
-]
-
 
 def get_closest_bucket(image):
     """计算图片最接近哪个桶"""
@@ -33,7 +19,7 @@ def get_closest_bucket(image):
     best_bucket = None
     min_diff = float("inf")
 
-    for bw, bh in BUCKETS:
+    for bw, bh in cfg.BUCKETS:
         bucket_ratio = bw / bh
         diff = abs(aspect_ratio - bucket_ratio)
         if diff < min_diff:

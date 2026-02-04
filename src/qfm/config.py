@@ -21,11 +21,11 @@ class ModelArgs:
 class TrainingArgs:
     batch_size: int = 16  # 这是每个桶内的 Batch Size
     lr: float = 5e-5  # 模型大了，LR 调小
-    epochs: int = 20
+    epochs: int = 2000
     grad_clip: float = 1.0
     seed: int = 42
     save_interval: int = 2
-    log_interval: int = 100
+    log_interval: int = 10
     validation_interval: int = 2000
 
 
@@ -47,13 +47,13 @@ class Config:
     LLM_ID = "Qwen/Qwen2.5-1.5B-Instruct"
 
     BUCKETS = [
-        (512, 512),
-        (576, 448),
-        (448, 576),
-        (640, 384),
-        (384, 640),
-        (704, 320),
-        (320, 704),
+        (512, 512),  # 1:1
+        (576, 448),  # 4:3 这里的数字必须能被 8 (VAE stride) 整除，最好能被 32 (DiT patch) 整除
+        (448, 576),  # 3:4
+        (640, 384),  # 16:9
+        (384, 640),  # 9:16
+        (704, 320),  # 21:9
+        (320, 704),  # 9:21
     ]
 
     model = ModelArgs()
