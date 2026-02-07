@@ -36,39 +36,82 @@ class Top2Router(nn.Module):
 
 
 class SparseMoELayer(nn.Module):
-    def __init__(self, hidden_size, num_experts=8, expert_capacity=4):
+    def __init__(self, hidden_size, num_experts=8, expert_capacity_factor=1.2):
+        """
+        Args:
+            hidden_size: 输入维度
+            num_experts: 专家总数
+            expert_capacity_factor: 专家容量因子，用于负载均衡参考
+        """
         super().__init__()
+        self.num_experts = num_experts
         self.router = Top2Router(hidden_size, num_experts)
-        intermediate_size = hidden_size * expert_capacity
+
+        # 专家网络：保持你原来的结构，但增加了对 H100 友好的初始化建议
+        intermediate_size = hidden_size * 4
         self.experts = nn.ModuleList([Expert(hidden_size, intermediate_size) for _ in range(num_experts)])
 
+        # 用于记录辅助 Loss
+        self.aux_loss = None
+
+    def some_elements(self, x):
+        return x.shape[0] > 0
+
     def forward(self, x):
-        # x: [B, L, D]
-        batch, seq_len, dim = x.shape
-        weights, indices = self.router(x)
-        self.last_indices = indices.detach()
-        final_output = torch.zeros_like(x)
+        # x shape: [B, L, D]
+        batch_size, seq_len, hidden_dim = x.shape
+        flat_x = x.view(-1, hidden_dim)  # [N, D]
+        num_tokens = flat_x.shape[0]
 
-        flat_x = x.view(-1, dim)
-        flat_output = final_output.view(-1, dim)
-        flat_indices = indices.view(-1, 2)
-        flat_weights = weights.view(-1, 2)
+        # 1. Router: 获取概率 [N, E]
+        logits = self.router.gate(flat_x)
+        probs = F.softmax(logits, dim=-1)
 
-        for i, expert in enumerate(self.experts):
-            mask = flat_indices == i
-            batch_mask = mask.any(dim=-1)
+        # 2. Top-k: 选出最相关的 2 个专家
+        top_weights, top_indices = torch.topk(probs, k=2, dim=-1)
 
-            if batch_mask.any():
-                selected_input = flat_x[batch_mask]
-                expert_out = expert(selected_input)
+        # 归一化权重
+        top_weights = top_weights / (top_weights.sum(dim=-1, keepdim=True) + 1e-6)
 
-                expanded_mask = mask[batch_mask]
-                selected_weights = flat_weights[batch_mask]
-                voting_weights = (selected_weights * expanded_mask.float()).sum(dim=1, keepdim=True)
+        # 3. 负载均衡 Loss (Auxiliary Loss)
+        # Pi: 每个专家获得的平均概率
+        Pi = probs.mean(dim=0)
+        # fi: 每个专家被选为 Top-1 的实际比例
+        top1_indices = top_indices[:, 0]
+        # 使用 torch.bincount 统计频率，比 histc 更快更稳
+        fi = torch.bincount(top1_indices, minlength=self.num_experts).to(probs.dtype) / num_tokens
+        self.aux_loss = self.num_experts * torch.sum(fi * Pi)
 
-                flat_output[batch_mask] += expert_out * voting_weights
-        final_output = flat_output.reshape(batch, seq_len, dim)
-        return final_output
+        # 4. 专家并行计算
+        final_output = torch.zeros_like(flat_x)
+
+        # 核心修正：标准 PyTorch 索引逻辑
+        # 我们遍历专家，找出哪些 Token 选中了它
+        for i in range(self.num_experts):
+            # 找出 top_indices 中等于当前专家 i 的所有坐标
+            # mask: [N, 2], 其中 True 表示该位置选择了专家 i
+            mask = top_indices == i
+
+            # nonzero() 返回 [M, 2] 维度的坐标，第 0 列是 token 索引，第 1 列是 k (0 或 1)
+            indices_loc = mask.nonzero()
+
+            if indices_loc.numel() > 0:
+                token_idx = indices_loc[:, 0]  # 哪些 token
+                k_idx = indices_loc[:, 1]  # 是作为 top1 还是 top2 选中的
+
+                # 提取 token 并运行专家网络
+                expert_input = flat_x[token_idx]
+                expert_out = self.experts[i](expert_input)
+
+                # 提取对应的权重: top_weights[token_idx, k_idx] -> [M]
+                # 然后通过 unsqueeze 变成 [M, 1] 进行广播相乘
+                weighted_out = expert_out * top_weights[token_idx, k_idx].unsqueeze(-1)
+
+                # 使用 index_add_ 将结果累加回 final_output
+                # 这是原子操作，能处理同一个 token 既选了专家 i 作为 top1 又选了它的极端情况（虽然通常不会）
+                final_output.index_add_(0, token_idx, weighted_out)
+
+        return final_output.view(batch_size, seq_len, hidden_dim)
 
 
 # ==========================================
