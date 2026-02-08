@@ -21,7 +21,7 @@ QFM/
 │       └── engine/            # 🚀 业务引擎
 │           ├── preprocess.py  # 数据预处理脚本
 │           ├── trainer.py     # 训练循环逻辑
-│           └── inferencer.py  # 推理生成逻辑
+│           └── inference.py  # 推理生成逻辑
 │
 ├── data/                      # [数据区] (Git 会自动忽略此文件夹内容)
 │   ├── raw_images/            # 👉 把原始图片 (.jpg/.png) 丢这里
