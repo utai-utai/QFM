@@ -19,14 +19,15 @@ class ModelArgs:
 
 @dataclass
 class TrainingArgs:
-    batch_size: int = 16  # 这是每个桶内的 Batch Size
+    batch_size: int = 4  # 这是每个桶内的 Batch Size (4 ~ 6)
     lr: float = 5e-5  # 模型大了，LR 调小
-    epochs: int = 2000
+    epochs: int = 50
+    accumulate_grad_batches: int = 4
     grad_clip: float = 1.0
     seed: int = 42
-    save_interval: int = 2
+    save_interval: int = 50
     log_interval: int = 10
-    validation_interval: int = 2000
+    validation_interval: int = 1000
 
 
 class Config:

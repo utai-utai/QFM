@@ -157,11 +157,25 @@ class ImageLoggerCallback(Callback):
         state_dict_to_save = pl_module.model.state_dict()
         # 如果 EMA 存在且已经开始更新，尝试混合 EMA 权重
         if ema_cb and trainer.global_step > ema_cb.start_step:
-            # 这里需要简单处理 key 的匹配 (Lightning 可能会在 key 前加 model.)
-            # 为了稳妥，我们直接保存当前的 training weights，
-            # 实际上推理时加载 EMA state dict 比较复杂，这里为了稳定性，
-            # 我们先用当前主干模型做验证，确保能出图。
-            pass
+            logger.info(f"✨ Using EMA weights for validation (Step {trainer.global_step})")
+
+            # 1. 获取 EMA 字典
+            ema_raw_dict = ema_cb.ema_state_dict
+
+            # 2. 修正 Key 的前缀 (去除 "model.")
+            # 因为 EMA callback 是从 pl_module 抓的参数，key 可能是 "model.x_embedder.weight"
+            # 但推理时的 MiniFluxDiT 需要 "x_embedder.weight"
+            clean_ema_dict = {}
+            for k, v in ema_raw_dict.items():
+                # 这里的 "model." 取决于你在 QFMModule 里把模型命名为 self.model
+                if k.startswith("model."):
+                    clean_k = k[6:]  # 去掉 "model." (6个字符)
+                    clean_ema_dict[clean_k] = v
+                else:
+                    clean_ema_dict[k] = v
+
+            # 3. 替换要保存的字典
+            state_dict_to_save = clean_ema_dict
 
         torch.save(state_dict_to_save, ckpt_path)
 
@@ -353,6 +367,7 @@ def run_training():
         callbacks=callbacks,
         log_every_n_steps=cfg.train.log_interval,
         num_sanity_val_steps=0,  # 跳过 Sanity Check 加速启动
+        accumulate_grad_batches=cfg.train.accumulate_grad_batches,
     )
 
     # 5. 开始训练
