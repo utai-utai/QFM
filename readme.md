@@ -1,7 +1,7 @@
 <div align="center">
   <a href="readme.md">English</a> |
-  <a href="readme.ja.md">日本語</a> |
-  <a href="readme.zh-CN.md">简体中文</a>
+  <a href="docs/readme.ja.md">日本語</a> |
+  <a href="docs/readme.zh-CN.md">简体中文</a>
 </div>
 
 ---
