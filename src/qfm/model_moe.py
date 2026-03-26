@@ -43,32 +43,36 @@ class SparseMoELayer(nn.Module):
         self.experts = nn.ModuleList([Expert(hidden_size, intermediate_size) for _ in range(num_experts)])
 
     def forward(self, x):
-        # x: [B, L, D]
-        batch, seq_len, dim = x.shape
-        weights, indices = self.router(x)
-        self.last_indices = indices.detach()
-        final_output = torch.zeros_like(x)
+        batch, seq_len, dim = x.shape  # x: [B, L, D] batch=B, seq_len=L, dim=D
+        weights, indices = self.router(x)  # weights: [B, L, 2], indices: [B, L, 2] (因为是Top-2)
+        self.last_indices = indices.detach()  # [B, L, 2] (切断梯度，常用于后续计算负载均衡Loss)
+        final_output = torch.zeros_like(x)  # [B, L, D] (最初的 3D 零矩阵置物架)
 
-        flat_x = x.view(-1, dim)
-        flat_output = final_output.view(-1, dim)
-        flat_indices = indices.view(-1, 2)
-        flat_weights = weights.view(-1, 2)
+        # 拍平序列维度，方便做掩码操作
+        flat_x = x.view(-1, dim)  # [B*L, D]
+        flat_output = final_output.view(-1, dim)  # [B*L, D] (和 final_output 共享内存)
+        flat_indices = indices.view(-1, 2)  # [B*L, 2]
+        flat_weights = weights.view(-1, 2)  # [B*L, 2]
 
-        for i, expert in enumerate(self.experts):
-            mask = flat_indices == i
-            batch_mask = mask.any(dim=-1)
+        for i, expert in enumerate(self.experts):  # 遍历所有专家
+            mask = flat_indices == i  # [B*L, 2] (布尔值矩阵，找当前专家 i 的位置)
+            batch_mask = mask.any(dim=-1)  # [B*L] (1D 布尔值向量，判断每个 Token 是否需要专家 i)
 
-            if batch_mask.any():
-                selected_input = flat_x[batch_mask]
-                expert_out = expert(selected_input)
+            if batch_mask.any():  # 如果有哪怕 1 个 Token 需要专家 i，就执行计算，假设有 K 个 Token 被分配给了当前专家 i
+                selected_input = flat_x[batch_mask]  # [K, D] (把需要的 K 个 Token 抽出来)
+                expert_out = expert(selected_input)  # [K, D] (经过 MLP 网络，维度不变)
 
-                expanded_mask = mask[batch_mask]
-                selected_weights = flat_weights[batch_mask]
-                voting_weights = (selected_weights * expanded_mask.float()).sum(dim=1, keepdim=True)
+                expanded_mask = mask[batch_mask]  # [K, 2] (抽出这 K 个 Token 的 True/False 原始状态)
+                selected_weights = flat_weights[batch_mask]  # [K, 2] (抽出这 K 个 Token 对应的权重)
 
-                flat_output[batch_mask] += expert_out * voting_weights
-        final_output = flat_output.reshape(batch, seq_len, dim)
-        return final_output
+                # 把 True/False 变成 1.0/0.0，与权重相乘，并在特征维度求和
+                voting_weights = (selected_weights * expanded_mask.float()).sum(dim=1, keepdim=True)  # [K, 1]
+
+                # 专家输出 [K, D] 乘以 权重 [K, 1]（利用广播机制变成 [K, D]），然后累加回原内存位置
+                flat_output[batch_mask] += expert_out * voting_weights  # 左边是 [K, D]，右边也是 [K, D]
+
+        final_output = flat_output.reshape(batch, seq_len, dim)  # [B, L, D]
+        return final_output  # [B, L, D]
 
 
 # ==========================================
