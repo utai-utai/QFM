@@ -73,9 +73,16 @@ class BucketedBatchSampler(Sampler):
         if self.shuffle:
             batch_indices = torch.randperm(len(all_batches), generator=g).tolist()
             all_batches = [all_batches[i] for i in batch_indices]
+        if self.num_replicas > 1:  # 处理多卡 Batch 数量不对齐
+            # 获取当前总 Batch 数
+            total_batches = len(all_batches)
 
-        # 4. DDP 切分 (如果是单卡，slice 就是 [::1]，即全取)
-        yield from all_batches[self.rank :: self.num_replicas]
+            # 计算出能被 GPU 数量整除的“安全长度”，比如 9 个 Batch，2 张卡 -> (9 // 2) * 2 = 8 个 Batch
+            safe_total_batches = (total_batches // self.num_replicas) * self.num_replicas
+            all_batches = all_batches[:safe_total_batches]  # 截断多余的尾巴 (Drop Last)
+
+        # 4. DDP 切分
+        yield from all_batches[self.rank :: self.num_replicas]  # 现在 all_batches 的长度绝对是 num_replicas 的整数倍
 
     def __len__(self):
         return len(self.dataset) // (self.batch_size * self.num_replicas)
