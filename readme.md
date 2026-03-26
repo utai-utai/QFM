@@ -1,44 +1,51 @@
+<div align="center">
+  <a href="readme.md">English</a> |
+  <a href="docs/readme.ja.md">日本語</a> |
+  <a href="docs/readme.zh-CN.md">简体中文</a>
+</div>
+
+---
+
 # QFM: Quantum Flow Matching (MVP)
 
-这是一个基于 Flow Matching 和 DiT (Diffusion Transformer) 架构的极简文生图模型实现。
-项目集成了 MoE (Mixture of Experts) 机制，支持 Qwen-1.5B 作为文本编码器，SDXL VAE 作为潜在空间编解码器。
+This is a minimalist Text-to-Image model implementation based on Flow Matching and DiT (Diffusion Transformer) architectures. The project integrates the MoE (Mixture of Experts) mechanism, supporting Qwen-1.5B as the text encoder and SDXL VAE as the latent space codec.
 
-## 📂 项目架构 (Project Structure)
+## 📂 Project Structure
 
 ```text
 QFM/
-├── main.py                    # [入口] 所有的命令（预处理、训练、推理）都从这里启动
-├── pyproject.toml             # [配置] 项目依赖与包管理
-├── .gitignore                 # [配置] 告诉 Git 忽略哪些垃圾文件
-├── .pre-commit-config.yaml    # [规范] 代码自动检查工具配置
+├── main.py                    # [Entry Point] All commands (preprocess, train, inference) start here
+├── pyproject.toml             # [Config] Project dependencies and package management
+├── .gitignore                 # [Config] Tells Git which files to ignore
+├── .pre-commit-config.yaml    # [Standard] Automated code formatting/linting hooks
 │
 ├── src/
-│   └── qfm/                   # [核心代码库]
-│       ├── config.py          # ⚙️ 全局配置中心 (路径、超参数、设备自动检测)
-│       ├── model_moe.py       # 🧠 DiT + MoE 模型定义
-│       ├── dataset.py         # 💾 数据加载逻辑
-│       ├── utils.py           # 🛠️ ODE 采样器 (Euler) 等工具
-│       └── engine/            # 🚀 业务引擎
-│           ├── preprocess.py  # 数据预处理脚本
-│           ├── trainer.py     # 训练循环逻辑
-│           └── inferencer.py  # 推理生成逻辑
+│   └── qfm/                   # [Core Library]
+│       ├── config.py          # ⚙️ Global configuration (Paths, Hyperparameters, Auto-device detection)
+│       ├── model_moe.py       # 🧠 DiT + MoE model definition
+│       ├── dataset.py         # 💾 Data loading logic
+│       ├── utils.py           # 🛠️ ODE Solvers (Euler) and other tools
+│       └── engine/            # 🚀 Business Logic Engine
+│           ├── preprocess.py  # Data preprocessing scripts
+│           ├── trainer.py     # Training loop logic
+│           └── inference.py   # Inference and generation logic
 │
-├── data/                      # [数据区] (Git 会自动忽略此文件夹内容)
-│   ├── raw_images/            # 👉 把原始图片 (.jpg/.png) 丢这里
-│   ├── processed/             # 预处理生成的 .pt 文件 (自动生成)
-│   └── data.jsonl             # 图片索引文件 (需手动创建)
+├── data/                      # [Data Area] (Ignored by Git)
+│   ├── raw_images/            # 👉 Drop raw images (.jpg/.png) here
+│   ├── processed/             # Preprocessed .pt files (Auto-generated)
+│   └── data.jsonl             # Image index file (Requires manual creation)
 │
-└── checkpoints/               # [模型区] (Git 会自动忽略)
-    └── flux_moe_ep*.pth       # 训练好的权重文件
+└── checkpoints/               # [Models] (Ignored by Git)
+    └── flux_moe_ep*.pth       # Trained weight files
 ```
 
 ---
 
-## 🛠️ 第一次安装 (First Time Setup)
+## 🛠️ First Time Setup
 
-无论你是 Mac 还是 Windows，请在拉取代码后执行以下步骤：
+Whether you are on Mac or Windows, please follow these steps after cloning the repository:
 
-### 1. 创建虚拟环境 (推荐)
+### 1. Create a Virtual Environment (Recommended)
 
 ```bash
 # Windows
@@ -50,230 +57,225 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-### 2. 安装项目依赖
+### 2. Install Project Dependencies
 
-这是最关键的一步！它会安装所有包，并配置好 `qfm` 的导入路径。
+This is the most crucial step! It installs all required packages and configures the `qfm` import paths.
 
-* 如果使用 Mac 或 Windows 的基础 CPU 版本：
+* For base CPU versions on Mac or Windows:
 ```bash
 pip install -e .
 ```
-*(注意最后有个点 `.`)*
+*(Note the dot `.` at the end)*
 
-* 如果使用 Linux/WSL (带GPU加速)：
+* For Linux/WSL (with GPU acceleration):
 ```bash
 pip install -e ".[gpu]"
 ```
-* 我们在项目中内置了一个诊断脚本，用于检测 CUDA、DeepSpeed 和 Flash Attention 是否安装正确。
+* We have included a built-in diagnostic script to verify CUDA, DeepSpeed, and Flash Attention installations:
 ```bash
 python tests/test_lib.py
 ```
 
-*如果看到全绿 `[✅]`，说明环境完美。*
+*If you see all green `[✅]`, your environment is perfectly configured.*
 
-### 3. 安装代码检查钩子 (Pre-commit)
+### 3. Install Pre-commit Hooks
 
-为了防止代码冲突和格式规范，必须安装这个。
+This is mandatory to prevent code conflicts and maintain formatting standards.
 
 ```bash
 pre-commit install
 ```
 
-*安装成功后，每次 commit 前它会自动帮你检查代码格式。*
+*Once installed, it will automatically check your code formatting before every commit.*
 
 ---
 
-## 🚀 如何运行 (Usage)
+## 🚀 Usage
 
-所有操作都通过 `main.py` 进行。
+All operations are executed through `main.py`.
 
-### 1. 准备数据
+### 1. Data Preparation
 
-在 `data/raw_images/` 放入图片。
-在 `QFM` 根目录创建 `data.jsonl`，格式如下：
+Place your images in `data/raw_images/`.
+Create a `data.jsonl` file in the root `QFM` directory with the following format:
 
 ```json
-{"image": "data/raw_images/dog.png", "text": "一只戴着墨镜的柯基犬在沙滩上"}
+{"image": "data/raw_images/dog.png", "text": "A corgi wearing sunglasses on the beach"}
 ```
 
-### 2. 预处理 (Preprocess)
+### 2. Preprocess
 
-这会将图片和文本编码为 Latent 和 Embedding，保存到 `data/processed/`。
+This encodes the images and text into Latents and Embeddings, saving them to `data/processed/`.
 
 ```bash
 python main.py preprocess
 ```
 
-### 3. 训练器 (Trainer)
+### 3. Trainer
 
-开始训练模型。权重会自动保存到 `checkpoints/`。
+Start training the model. Weights will be automatically saved to `checkpoints/`.
 
 ```bash
 python main.py train
 ```
 
-> **注意**：Mac 上会自动使用 `float32` (MPS)，Windows (NVIDIA) 上会自动使用 `bfloat16` (CUDA)。
+> **Note**: Macs will automatically default to `float32` (MPS), while Windows (NVIDIA) will default to `bfloat16` (CUDA).
 
-### 4. 推理 (Inference)
+### 4. Inference
 
-加载训练好的权重生成图片。
-- 默认推理 (自动用最新模型 + 生成 512x512)：
+Load trained weights to generate images.
+- Default inference (Auto-loads the latest model + generates 512x512):
 ```bash
 python main.py inference --prompt "A cute cat"
 ```
-- 高级推理 (生成宽屏壁纸 1024x512)：
+- Advanced inference (Generates a 1024x512 widescreen wallpaper):
 ```bash
 python main.py inference --prompt "Wide angle shot of space station" --width 1024 --height 512
 ```
-- 指定模型推理：
+- Inference with a specific model:
 ```bash
 python main.py inference --ckpt checkpoints/qfm_moe_ep10.pth
 ```
 
-
 ---
-## 🤝 协作工作流 (Workflow)
+## 🤝 Collaboration Workflow
 
-为了保证工作流顺畅，请严格遵守以下流程：
+To ensure a smooth workflow, strictly adhere to the following process:
 
-### ☀️ 开始工作前 (Pull)
+### ☀️ Before You Start (Pull)
 
-**一定要先拉取最新代码！**
+**Always pull the latest code first!**
 
 ```bash
 git pull
 ```
 
-*(PyCharm 用户：点击右上角蓝色向下箭头)*
+*(PyCharm Users: Click the blue downward arrow in the top right corner)*
 
-### 🌙 写完代码后 (Commit & Push)
+### 🌙 After Writing Code (Commit & Push)
 
-* **添加到暂存区**：
+* **Stage your changes**:
 ```bash
 git add .
 ```
 
-* **提交 (Commit)**：
+* **Commit**:
 ```bash
-git commit -m "描述你修改了什么"
+git commit -m "Describe your changes here"
 ```
 
+> **Note**: If `pre-commit` throws an error and auto-fixes files, you must **run** `git add .` and `git commit` **again**.
 
-> **注意**：如果 `pre-commit` 报错并自动修复了文件，你需要**再运行一次** `git add .` 和 `git commit`。
-
-* **推送到云端 (Push)**：
+* **Push to the cloud**:
 ```bash
 git push
 ```
 
-
-*(PyCharm 用户：Ctrl/Cmd + K 提交 >> Ctrl/Cmd + Shift + K 推送)*
-
----
-
-## ⚠️ 常见问题 (FAQ)
-
-**Q: 预处理或训练时报错 `NaN` 或 `Loss爆炸`？**
-
-* **Mac 用户**：这是 MPS 的精度问题。代码已强制设为 `float32`，请勿手动改为 `float16`。
-* **Windows 用户**：请确保 `config.py` 中返回的是 `bfloat16`。
-
-**Q: 推送时提示 `Pre-commit failed`？**
-
-* 这是正常的。工具帮你自动格式化了代码。请重新 `add` 并 `commit` 即可。
-
-**Q: 找不到 `qfm` 模块？**
-
-* 请确保你执行了 `pip install -e .`。
+*(PyCharm Users: Ctrl/Cmd + K to commit >> Ctrl/Cmd + Shift + K to push)*
 
 ---
 
-## 💻 开发环境避坑指南 (WSL2 + PyCharm)
+## ⚠️ FAQ
 
-如果你在 Windows 上使用 WSL2 + PyCharm 开发，请务必阅读以下常见问题：
+**Q: Encountering `NaN` or `Loss Explosion` during preprocessing or training?**
 
-### Q1: DeepSpeed 报错 `CUDA_HOME does not exist`？
+* **Mac Users**: This is an MPS precision issue. The code is forced to `float32`; do not manually change it to `float16`.
+* **Windows Users**: Ensure that `config.py` is returning `bfloat16`.
 
-PyCharm 直接运行时可能无法加载 `.bashrc` 环境变量。
+**Q: Prompted with `Pre-commit failed` during a push?**
 
-* **方法**：运行 `python tests/test_env.py`，脚本内置了自动修复补丁。或者在 `.bashrc` 中强制写入：
+* This is normal. The tool automatically formatted your code. Simply `add` and `commit` again.
+
+**Q: ModuleNotFoundError for `qfm`?**
+
+* Ensure you have run `pip install -e .`.
+
+---
+
+## 💻 Dev Environment Troubleshooting (WSL2 + PyCharm)
+
+If you are developing on Windows using WSL2 + PyCharm, please read the following:
+
+### Q1: DeepSpeed Error `CUDA_HOME does not exist`?
+
+PyCharm might not load `.bashrc` environment variables when running directly.
+
+* **Solution**: Run `python tests/test_env.py` (contains an auto-fix patch). Alternatively, force write this in your `.bashrc`:
 ```bash
-export CUDA_HOME=/你的环境路径/
+export CUDA_HOME=/your/env/path/
 export PATH=$CUDA_HOME/bin:$PATH
 ```
 
+### Q2: Git commit throws `pre-commit not found`?
 
+This happens because PyCharm is using the Windows version of Git and cannot find the WSL environment.
 
-### Q2: Git 提交时报错 `pre-commit not found`？
-
-这是因为 PyCharm 使用了 Windows 版 Git，找不到 WSL 里的环境。
-
-* **方法 A (推荐)**：在 PyCharm 底部的 Terminal `(qfm)` 中使用命令行提交：
+* **Solution A (Recommended)**: Use the command line in PyCharm's bottom Terminal `(qfm)`:
 ```bash
 git commit -m "..."
 ```
-* **方法 B (彻底修复)**：在 PyCharm 设置中，将 Git 可执行文件路径改为 WSL 路径：
+* **Solution B (Permanent Fix)**: In PyCharm Settings, change the Git executable path to your WSL path:
 ```bash
 \\wsl$\Ubuntu-22.04\usr\bin\git
 ```
 
-### Q3: 报错 `detected dubious ownership`？
+### Q3: Error `detected dubious ownership`?
 
-这是 Windows 访问 Linux 文件权限问题。
+This is a Windows permission issue when accessing Linux files.
 
-* 在 Windows PowerShell 中运行：
+* Run this in Windows PowerShell:
 ```bash
 git config --global --add safe.directory '*'
 ```
 
 ---
-## AI 对话提示词
+## AI Prompt (For Assistant Context)
 
 ```
 # Role Setup
-你现在是我的高级 AI 架构师和 Python 编程搭档。我正在开发一个名为 **QFM (Quantum Flow Matching)** 的文生图 MVP 项目。
-项目目前已经跑通了预处理、训练和推理的最小闭环。
+You are my Senior AI Architect and Python pair programming partner. I am developing a Text-to-Image MVP project named **QFM (Quantum Flow Matching)**.
+The project currently has a working minimum loop for preprocessing, training, and inference.
 
-请记住以下项目上下文、技术栈和文件结构，并在后续对话中严格遵守这些规范。
+Please memorize the following project context, tech stack, and file structure, and strictly adhere to these guidelines in our subsequent conversations.
 
-## 1. 项目概况
-* **核心架构**: Flow Matching (Rectified Flow) + DiT (Diffusion Transformer) + MoE (Mixture of Experts).
-* **组件**:
+## 1. Project Overview
+* **Core Architecture**: Flow Matching (Rectified Flow) + DiT (Diffusion Transformer) + MoE (Mixture of Experts).
+* **Components**:
     * VAE: `madebyollin/sdxl-vae-fp16-fix` (SDXL VAE)
     * Text Encoder 1: `openai/clip-vit-large-patch14`
     * Text Encoder 2: `Qwen/Qwen2.5-1.5B-Instruct`
-* **开发环境**:
-    * **Mac (Dev)**: 使用 MPS 加速，强制 `float32` (避免 LayerNorm 溢出)，DataLoader `num_workers=0`。
-    * **Windows (Train)**: 使用 CUDA (3090 Ti)，强制 `bfloat16` (防止梯度爆炸)。
+* **Dev Environments**:
+    * **Mac (Dev)**: Uses MPS acceleration, forced `float32` (avoids LayerNorm overflow), DataLoader `num_workers=0`.
+    * **Windows (Train)**: Uses CUDA (3090 Ti), forced `bfloat16` (prevents gradient explosion).
 
-## 2. 核心文件结构 (Project Structure)
-项目遵循 `src` 布局，包名为 `qfm`，通过 `pip install -e .` 安装。
+## 2. Core File Structure
+The project follows a `src` layout, the package name is `qfm`, installed via `pip install -e .`.
 
 QFM/
-├── main.py                    # [总入口] 调度 preprocess/train/inference
-├── pyproject.toml             # [配置] 依赖管理 & Ruff 配置
-├── .pre-commit-config.yaml    # [规范] Ruff 代码检查
+├── main.py                    # [Global Entry] Schedules preprocess/train/inference
+├── pyproject.toml             # [Config] Dependency management & Ruff config
+├── .pre-commit-config.yaml    # [Standard] Ruff linting
 ├── src/
-│   └── qfm/                   # [源代码包]
-│       ├── config.py          # [核心配置] 路径、超参数、设备自动判断(get_device/get_dtype)
-│       ├── model_moe.py       # [模型] DiT Block + MoE Layer
-│       ├── dataset.py         # [数据] LatentDataset
-│       ├── utils.py           # [工具] Euler ODE Solver
+│   └── qfm/                   # [Source Code]
+│       ├── config.py          # [Core Config] Paths, Hyperparams, Auto-device logic (get_device/get_dtype)
+│       ├── model_moe.py       # [Model] DiT Block + MoE Layer
+│       ├── dataset.py         # [Data] LatentDataset
+│       ├── utils.py           # [Utils] Euler ODE Solver
 │       ├── core/
-│       │   └── logger.py      # [日志] 统一日志模块
-│       └── engine/            # [业务引擎]
-│           ├── preprocess.py  # 预处理 (生成 .pt)
-│           ├── trainer.py     # 训练循环
-│           └── inferencer.py  # 推理脚本
-└── data/                      # 存放 raw_images 和 data.jsonl
+│       │   └── logger.py      # [Logs] Unified logging module
+│       └── engine/            # [Engines]
+│           ├── preprocess.py  # Preprocessing (generates .pt)
+│           ├── trainer.py     # Training loop
+│           └── inferencer.py  # Inference script
+└── data/                      # Contains raw_images and data.jsonl
 
-## 3. 已建立的工程规范 (Strict Rules)
-1.  **配置分离**: 禁止硬编码路径或参数。所有超参数（Batch size, LR, Model Dim）必须从 `qfm.config.cfg` 读取。
-2.  **导入规范**: 必须使用绝对导入 `from qfm.xxx import yyy`，禁止相对导入。
-3.  **设备兼容**: 涉及 `device` 和 `dtype` 时，必须调用 `cfg.get_device()` 和 `cfg.get_dtype(device)`，严禁写死 "cuda"。
-4.  **预处理**: 生成的 Latent 必须在 Encode 时乘以 `0.13025`，Decode 时除以该值。
+## 3. Established Engineering Standards (Strict Rules)
+1.  **Config Separation**: No hardcoded paths or parameters. All hyperparameters (Batch size, LR, Model Dim) MUST be read from `qfm.config.cfg`.
+2.  **Import Standards**: Must use absolute imports `from qfm.xxx import yyy`. Relative imports are strictly forbidden.
+3.  **Device Compatibility**: When dealing with `device` and `dtype`, must call `cfg.get_device()` and `cfg.get_dtype(device)`. Hardcoding "cuda" is forbidden.
+4.  **Preprocessing**: Generated Latents MUST be multiplied by `0.13025` during Encode, and divided by this value during Decode.
 
-## 4. 当前任务
-我目前已经完成了基础架构搭建，可以成功运行 `python main.py train` 和 `inference`。
-接下来如果你准备好了，请回复 "QFM Environment Loaded"，然后等待我的具体指令。
+## 4. Current Task
+I have finished the foundational architecture and can successfully run `python main.py train` and `inference`.
+Next, if you are ready, please reply "QFM Environment Loaded" and wait for my specific instructions.
 ```

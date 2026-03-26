@@ -12,6 +12,7 @@ dependencies = [
     # === 深度学习基础框架 ===
     "torch==2.5.1",
     "torchvision==0.20.1",
+    "lightning>=2.4.0",
     "ema-pytorch",
     "numpy>=1.26.0,<2.3.0",
 
