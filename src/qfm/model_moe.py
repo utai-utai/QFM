@@ -122,7 +122,7 @@ class MoEDiTBlock(nn.Module):
 
 
 # ==========================================
-# Part C: 主模型架构 (修复版)
+# Part C: 主模型架构
 # ==========================================
 
 
@@ -174,13 +174,9 @@ class MiniFluxDiT(nn.Module):
         """
         c = self.in_channels
         p = self.patch_size
-
-        # x: [B, L, P*P*C] -> [B, H, W, P, P, C]
-        x = x.reshape(shape=(x.shape[0], h, w, p, p, c))
-        # [B, H, W, P, P, C] -> [B, C, H, P, W, P]
-        x = torch.einsum("nhwpqc->nchpwq", x)
-        # -> [B, C, H*P, W*P]
-        return x.reshape(shape=(x.shape[0], c, h * p, w * p))
+        x = x.reshape(shape=(x.shape[0], h, w, p, p, c))  # x: [B, L, P*P*C] -> [B, H, W, P, P, C]
+        x = torch.einsum("nhwpqc->nchpwq", x)  # [B, H, W, P, P, C] -> [B, C, H, P, W, P]
+        return x.reshape(shape=(x.shape[0], c, h * p, w * p))  # -> [B, C, H*P, W*P]
 
     def get_timestep_embedding(self, t, dim=256):
         half_dim = dim // 2
@@ -191,38 +187,35 @@ class MiniFluxDiT(nn.Module):
         return emb
 
     def forward(self, x, t, clip_vec, qwen_context):
-        # x: [B, 4, H, W] (注意 H, W 可能不是 64x64)
-        B, C, H, W = x.shape
+        B, C, H, W = x.shape  # x: [B, 4, H, W] (注意 H, W 可能不是 64x64)
 
         # 1. Embed Inputs
-        # x_embedder 是卷积，会自动处理不同分辨率
-        x = self.x_embedder(x)  # [B, D, H/p, W/p]
-
-        # 记录现在的 grid size，后面 unpatchify 要用
-        grid_h, grid_w = x.shape[2], x.shape[3]
-
+        x = self.x_embedder(x)  # [B, D, H/p, W/p]，x_embedder 是卷积，会自动处理不同分辨率
+        grid_h, grid_w = x.shape[2], x.shape[3]  # 记录现在的 grid size，后面 unpatchify 要用
         x = x.flatten(2).transpose(1, 2)  # [B, L, D]
 
-        # 🔥 2. Positional Embedding 插值 (关键修复)
+        # 2. Positional Embedding 插值
         if x.shape[1] != self.pos_embed.shape[1]:
-            # 拿到原始设定的边长 (比如 sqrt(1024) = 32)
-            orig_size = int(math.sqrt(self.pos_embed.shape[1]))
-            # 还原 pos_embed 为 2D: [1, D, 32, 32]
-            pos_embed = self.pos_embed.permute(0, 2, 1).reshape(1, -1, orig_size, orig_size)
-            # 插值到现在的尺寸 [1, D, grid_h, grid_w]
-            pos_embed = F.interpolate(pos_embed, size=(grid_h, grid_w), mode="bicubic", align_corners=False)
-            # 压扁回去: [1, L_new, D]
-            pos_embed = pos_embed.flatten(2).transpose(1, 2)
+            orig_size = int(
+                math.sqrt(self.pos_embed.shape[1])
+            )  # 算出原本预设的 2D 网格边长 (假设原本是 32x32 = 1024个Patch)
+            pos_embed = self.pos_embed.permute(0, 2, 1).reshape(
+                1, -1, orig_size, orig_size
+            )  # 把 1D 的位置编码还原回 2D 的形状 [1, D, 32, 32]
+            pos_embed = F.interpolate(
+                pos_embed, size=(grid_h, grid_w), mode="bicubic", align_corners=False
+            )  # 双三次插值 (Bicubic Interpolation)：插值到现在的尺寸 [1, D, grid_h, grid_w]
+            pos_embed = pos_embed.flatten(2).transpose(1, 2)  # 压扁回去: [1, L_new, D]
             x = x + pos_embed
         else:
             x = x + self.pos_embed
 
         # 3. Embed Conditions
-        t_emb = self.get_timestep_embedding(t)
+        t_emb = self.get_timestep_embedding(t)  # [B, 256] 将时间 t 变成正弦/余弦向量
         t_emb = t_emb.to(dtype=x.dtype)
-        t_emb = self.t_embedder_mlp(t_emb)
-        cond = torch.cat([t_emb, clip_vec], dim=-1)
-        c = self.cond_proj(cond)
+        t_emb = self.t_embedder_mlp(t_emb)  # [B, 256] 提纯时间特征
+        cond = torch.cat([t_emb, clip_vec], dim=-1)  # 拼上 CLIP 全局文本向量
+        c = self.cond_proj(cond)  # [B, 1024] 融合为一个统一的全局条件 c
 
         # 4. Backbone
         for block in self.blocks:
