@@ -36,82 +36,43 @@ class Top2Router(nn.Module):
 
 
 class SparseMoELayer(nn.Module):
-    def __init__(self, hidden_size, num_experts=8, expert_capacity_factor=1.2):
-        """
-        Args:
-            hidden_size: 输入维度
-            num_experts: 专家总数
-            expert_capacity_factor: 专家容量因子，用于负载均衡参考
-        """
+    def __init__(self, hidden_size, num_experts=8, expert_capacity=4):
         super().__init__()
-        self.num_experts = num_experts
         self.router = Top2Router(hidden_size, num_experts)
-
-        # 专家网络：保持你原来的结构，但增加了对 H100 友好的初始化建议
-        intermediate_size = hidden_size * 4
+        intermediate_size = hidden_size * expert_capacity
         self.experts = nn.ModuleList([Expert(hidden_size, intermediate_size) for _ in range(num_experts)])
 
-        # 用于记录辅助 Loss
-        self.aux_loss = None
-
-    def some_elements(self, x):
-        return x.shape[0] > 0
-
     def forward(self, x):
-        # x shape: [B, L, D]
-        batch_size, seq_len, hidden_dim = x.shape
-        flat_x = x.view(-1, hidden_dim)  # [N, D]
-        num_tokens = flat_x.shape[0]
+        batch, seq_len, dim = x.shape  # x: [B, L, D] batch=B, seq_len=L, dim=D
+        weights, indices = self.router(x)  # weights: [B, L, 2], indices: [B, L, 2] (因为是Top-2)
+        self.last_indices = indices.detach()  # [B, L, 2] (切断梯度，常用于后续计算负载均衡Loss)
+        final_output = torch.zeros_like(x)  # [B, L, D] (最初的 3D 零矩阵置物架)
 
-        # 1. Router: 获取概率 [N, E]
-        logits = self.router.gate(flat_x)
-        probs = F.softmax(logits, dim=-1)
+        # 拍平序列维度，方便做掩码操作
+        flat_x = x.view(-1, dim)  # [B*L, D]
+        flat_output = final_output.view(-1, dim)  # [B*L, D] (和 final_output 共享内存)
+        flat_indices = indices.view(-1, 2)  # [B*L, 2]
+        flat_weights = weights.view(-1, 2)  # [B*L, 2]
 
-        # 2. Top-k: 选出最相关的 2 个专家
-        top_weights, top_indices = torch.topk(probs, k=2, dim=-1)
+        for i, expert in enumerate(self.experts):  # 遍历所有专家
+            mask = flat_indices == i  # [B*L, 2] (布尔值矩阵，找当前专家 i 的位置)
+            batch_mask = mask.any(dim=-1)  # [B*L] (1D 布尔值向量，判断每个 Token 是否需要专家 i)
 
-        # 归一化权重
-        top_weights = top_weights / (top_weights.sum(dim=-1, keepdim=True) + 1e-6)
+            if batch_mask.any():  # 如果有哪怕 1 个 Token 需要专家 i，就执行计算，假设有 K 个 Token 被分配给了当前专家 i
+                selected_input = flat_x[batch_mask]  # [K, D] (把需要的 K 个 Token 抽出来)
+                expert_out = expert(selected_input)  # [K, D] (经过 MLP 网络，维度不变)
 
-        # 3. 负载均衡 Loss (Auxiliary Loss)
-        # Pi: 每个专家获得的平均概率
-        Pi = probs.mean(dim=0)
-        # fi: 每个专家被选为 Top-1 的实际比例
-        top1_indices = top_indices[:, 0]
-        # 使用 torch.bincount 统计频率，比 histc 更快更稳
-        fi = torch.bincount(top1_indices, minlength=self.num_experts).to(probs.dtype) / num_tokens
-        self.aux_loss = self.num_experts * torch.sum(fi * Pi)
+                expanded_mask = mask[batch_mask]  # [K, 2] (抽出这 K 个 Token 的 True/False 原始状态)
+                selected_weights = flat_weights[batch_mask]  # [K, 2] (抽出这 K 个 Token 对应的权重)
 
-        # 4. 专家并行计算
-        final_output = torch.zeros_like(flat_x)
+                # 把 True/False 变成 1.0/0.0，与权重相乘，并在特征维度求和
+                voting_weights = (selected_weights * expanded_mask.float()).sum(dim=1, keepdim=True)  # [K, 1]
 
-        # 核心修正：标准 PyTorch 索引逻辑
-        # 我们遍历专家，找出哪些 Token 选中了它
-        for i in range(self.num_experts):
-            # 找出 top_indices 中等于当前专家 i 的所有坐标
-            # mask: [N, 2], 其中 True 表示该位置选择了专家 i
-            mask = top_indices == i
+                # 专家输出 [K, D] 乘以 权重 [K, 1]（利用广播机制变成 [K, D]），然后累加回原内存位置
+                flat_output[batch_mask] += expert_out * voting_weights  # 左边是 [K, D]，右边也是 [K, D]
 
-            # nonzero() 返回 [M, 2] 维度的坐标，第 0 列是 token 索引，第 1 列是 k (0 或 1)
-            indices_loc = mask.nonzero()
-
-            if indices_loc.numel() > 0:
-                token_idx = indices_loc[:, 0]  # 哪些 token
-                k_idx = indices_loc[:, 1]  # 是作为 top1 还是 top2 选中的
-
-                # 提取 token 并运行专家网络
-                expert_input = flat_x[token_idx]
-                expert_out = self.experts[i](expert_input)
-
-                # 提取对应的权重: top_weights[token_idx, k_idx] -> [M]
-                # 然后通过 unsqueeze 变成 [M, 1] 进行广播相乘
-                weighted_out = expert_out * top_weights[token_idx, k_idx].unsqueeze(-1)
-
-                # 使用 index_add_ 将结果累加回 final_output
-                # 这是原子操作，能处理同一个 token 既选了专家 i 作为 top1 又选了它的极端情况（虽然通常不会）
-                final_output.index_add_(0, token_idx, weighted_out)
-
-        return final_output.view(batch_size, seq_len, hidden_dim)
+        final_output = flat_output.reshape(batch, seq_len, dim)  # [B, L, D]
+        return final_output  # [B, L, D]
 
 
 # ==========================================
@@ -161,7 +122,7 @@ class MoEDiTBlock(nn.Module):
 
 
 # ==========================================
-# Part C: 主模型架构 (修复版)
+# Part C: 主模型架构
 # ==========================================
 
 
@@ -213,13 +174,9 @@ class MiniFluxDiT(nn.Module):
         """
         c = self.in_channels
         p = self.patch_size
-
-        # x: [B, L, P*P*C] -> [B, H, W, P, P, C]
-        x = x.reshape(shape=(x.shape[0], h, w, p, p, c))
-        # [B, H, W, P, P, C] -> [B, C, H, P, W, P]
-        x = torch.einsum("nhwpqc->nchpwq", x)
-        # -> [B, C, H*P, W*P]
-        return x.reshape(shape=(x.shape[0], c, h * p, w * p))
+        x = x.reshape(shape=(x.shape[0], h, w, p, p, c))  # x: [B, L, P*P*C] -> [B, H, W, P, P, C]
+        x = torch.einsum("nhwpqc->nchpwq", x)  # [B, H, W, P, P, C] -> [B, C, H, P, W, P]
+        return x.reshape(shape=(x.shape[0], c, h * p, w * p))  # -> [B, C, H*P, W*P]
 
     def get_timestep_embedding(self, t, dim=256):
         half_dim = dim // 2
@@ -230,38 +187,35 @@ class MiniFluxDiT(nn.Module):
         return emb
 
     def forward(self, x, t, clip_vec, qwen_context):
-        # x: [B, 4, H, W] (注意 H, W 可能不是 64x64)
-        B, C, H, W = x.shape
+        B, C, H, W = x.shape  # x: [B, 4, H, W] (注意 H, W 可能不是 64x64)
 
         # 1. Embed Inputs
-        # x_embedder 是卷积，会自动处理不同分辨率
-        x = self.x_embedder(x)  # [B, D, H/p, W/p]
-
-        # 记录现在的 grid size，后面 unpatchify 要用
-        grid_h, grid_w = x.shape[2], x.shape[3]
-
+        x = self.x_embedder(x)  # [B, D, H/p, W/p]，x_embedder 是卷积，会自动处理不同分辨率
+        grid_h, grid_w = x.shape[2], x.shape[3]  # 记录现在的 grid size，后面 unpatchify 要用
         x = x.flatten(2).transpose(1, 2)  # [B, L, D]
 
-        # 🔥 2. Positional Embedding 插值 (关键修复)
+        # 2. Positional Embedding 插值
         if x.shape[1] != self.pos_embed.shape[1]:
-            # 拿到原始设定的边长 (比如 sqrt(1024) = 32)
-            orig_size = int(math.sqrt(self.pos_embed.shape[1]))
-            # 还原 pos_embed 为 2D: [1, D, 32, 32]
-            pos_embed = self.pos_embed.permute(0, 2, 1).reshape(1, -1, orig_size, orig_size)
-            # 插值到现在的尺寸 [1, D, grid_h, grid_w]
-            pos_embed = F.interpolate(pos_embed, size=(grid_h, grid_w), mode="bicubic", align_corners=False)
-            # 压扁回去: [1, L_new, D]
-            pos_embed = pos_embed.flatten(2).transpose(1, 2)
+            orig_size = int(
+                math.sqrt(self.pos_embed.shape[1])
+            )  # 算出原本预设的 2D 网格边长 (假设原本是 32x32 = 1024个Patch)
+            pos_embed = self.pos_embed.permute(0, 2, 1).reshape(
+                1, -1, orig_size, orig_size
+            )  # 把 1D 的位置编码还原回 2D 的形状 [1, D, 32, 32]
+            pos_embed = F.interpolate(
+                pos_embed, size=(grid_h, grid_w), mode="bicubic", align_corners=False
+            )  # 双三次插值 (Bicubic Interpolation)：插值到现在的尺寸 [1, D, grid_h, grid_w]
+            pos_embed = pos_embed.flatten(2).transpose(1, 2)  # 压扁回去: [1, L_new, D]
             x = x + pos_embed
         else:
             x = x + self.pos_embed
 
         # 3. Embed Conditions
-        t_emb = self.get_timestep_embedding(t)
+        t_emb = self.get_timestep_embedding(t)  # [B, 256] 将时间 t 变成正弦/余弦向量
         t_emb = t_emb.to(dtype=x.dtype)
-        t_emb = self.t_embedder_mlp(t_emb)
-        cond = torch.cat([t_emb, clip_vec], dim=-1)
-        c = self.cond_proj(cond)
+        t_emb = self.t_embedder_mlp(t_emb)  # [B, 256] 提纯时间特征
+        cond = torch.cat([t_emb, clip_vec], dim=-1)  # 拼上 CLIP 全局文本向量
+        c = self.cond_proj(cond)  # [B, 1024] 融合为一个统一的全局条件 c
 
         # 4. Backbone
         for block in self.blocks:
