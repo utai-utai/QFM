@@ -4,7 +4,7 @@ import lightning.pytorch as pl
 import torch
 import torch.nn.functional as F
 from lightning.pytorch.callbacks import Callback, LearningRateMonitor, ModelCheckpoint
-from lightning.pytorch.loggers import WandbLogger
+from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.strategies import DDPStrategy
 from torch.optim.lr_scheduler import LinearLR
 from torch.utils.data import DataLoader, Sampler
@@ -64,10 +64,11 @@ class BucketedBatchSampler(Sampler):
                 idxs = torch.tensor(idxs)[torch.randperm(len(idxs), generator=g)].tolist()
 
             # 生成 Batch (单卡视角)
+            # 注意：不丢弃不完整 batch——同一桶内 shape 一致，tensor 仍可正常 stack；
+            # 否则数据 < batch_size 时会产生 0 个 batch，训练直接退出。
             for i in range(0, len(idxs), self.batch_size):
                 batch = idxs[i : i + self.batch_size]
-                if len(batch) == self.batch_size:  # 丢弃不完整的最后一行，保证 tensor 形状对齐
-                    all_batches.append(batch)
+                all_batches.append(batch)
 
         # 3. Global Shuffle
         if self.shuffle:
@@ -78,7 +79,13 @@ class BucketedBatchSampler(Sampler):
         yield from all_batches[self.rank :: self.num_replicas]
 
     def __len__(self):
-        return len(self.dataset) // (self.batch_size * self.num_replicas)
+        # 与 __iter__ 一致：每个桶按 batch_size 切（向上取整，保留尾巴），再按 rank 切
+        bucket_counts = {}
+        for item in self.dataset.metadata:
+            shape = tuple(item["shape"])
+            bucket_counts[shape] = bucket_counts.get(shape, 0) + 1
+        total = sum(-(-c // self.batch_size) for c in bucket_counts.values())  # ceil
+        return (total + self.num_replicas - 1 - self.rank) // self.num_replicas
 
     def set_epoch(self, epoch):
         self.epoch = epoch
@@ -196,11 +203,8 @@ class ImageLoggerCallback(Callback):
                 device=str(pl_module.device),  # 传入当前 GPU
             )
 
-            # 4. Log 到 WandB
-            if trainer.logger:
-                trainer.logger.log_image(
-                    key="validation_image", images=[out_path], caption=[f"Step {trainer.global_step}"]
-                )
+            # 4. 验证图存到 checkpoint 目录即可（已写盘到 out_path）
+            logger.info(f"   📸 Validation image saved: {out_path}")
 
         except Exception as e:
             logger.error(f"⚠️ Validation inference failed: {e}")
@@ -306,7 +310,9 @@ class QFMDataModule(pl.LightningDataModule):
 
     def train_dataloader(self):
         self.sampler = BucketedBatchSampler(self.train_dataset, batch_size=cfg.train.batch_size, shuffle=True)
-        return DataLoader(self.train_dataset, batch_sampler=self.sampler, num_workers=4, pin_memory=True)
+        # 小数据集用 num_workers=0 更稳；大数据集训练时可调到 4
+        nw = 4 if len(self.train_dataset) >= 64 else 0
+        return DataLoader(self.train_dataset, batch_sampler=self.sampler, num_workers=nw, pin_memory=True)
 
 
 # ==========================================
@@ -330,10 +336,8 @@ def run_training():
     dm = QFMDataModule()
     model = QFMModule()
 
-    # WandB Logger
-    wandb_logger = WandbLogger(
-        project="QFM-Small-MoE", name="pl-run-v1", config={"batch_size": cfg.train.batch_size, "lr": cfg.train.lr}
-    )
+    # 本地 CSV Logger（不需要登录任何外部服务）
+    csv_logger = CSVLogger(save_dir=cfg.CKPT_DIR, name="qfm_logs")
 
     # Callbacks
     callbacks = [
@@ -363,7 +367,7 @@ def run_training():
         precision="bf16-mixed",  # 自动混合精度
         max_epochs=cfg.train.epochs,
         gradient_clip_val=cfg.train.grad_clip,  # 梯度裁剪
-        logger=wandb_logger,
+        logger=csv_logger,
         callbacks=callbacks,
         log_every_n_steps=cfg.train.log_interval,
         num_sanity_val_steps=0,  # 跳过 Sanity Check 加速启动
